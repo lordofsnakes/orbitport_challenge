@@ -44,6 +44,12 @@ struct HeliosWindow {
     window_end: chrono::DateTime<chrono::Utc>,
     peak_elevation_deg: f64,
 }
+#[derive(serde::Deserialize)]
+struct BookingResponse {
+     booking_id: String,
+     window_ref: String,
+     state: String 
+    }
 
 impl HeliosPlugin {
     pub fn new(base_url: impl Into<String>, token: impl Into<String>) -> Self {
@@ -123,16 +129,60 @@ impl GroundStationProvider for HeliosPlugin {
   
         }
   
-        //todo!("call GET /v1/windows and map each Helios window onto a canonical Pass")
+       
     }
 
     async fn schedule_contact(&self, _pass_id: &str) -> Result<Contact, ProviderError> {
         
+        let response = self.http
+        .post(format!("{}/v1/bookings", self.base_url))
+        .bearer_auth(&self.token)
+        .json(&serde_json::json!({"window_ref": _pass_id,}))
+        .send()
+        .await?;
 
+        let status = response.status();
+        
+        match status {
+        
+        reqwest::StatusCode::OK => {
+            
+        let body: BookingResponse = response
+        .json()
+        .await
+        .map_err(|e| ProviderError::Decode(e.to_string()))?;
 
-        todo!("POST /v1/bookings and return a Contact, mapping the Helios `state`")
-    }
+        let status = match body.state.as_str() {
+        "RESERVED" => ContactStatus::Scheduled,
+        "ACTIVE" => ContactStatus::InProgress,
+        "DONE" => ContactStatus::Completed,
+        "ERROR" => ContactStatus::Failed,
+        other => {
+        return Err(ProviderError::Decode(format!("unknown contact state {other}")));
+        }
+        };  
 
+        Ok(Contact{
+                id: body.booking_id,
+                pass_id: body.window_ref,
+                status 
+        }) 
+        }
+        reqwest::StatusCode::UNAUTHORIZED => {
+        return Err(ProviderError::Auth);
+        }
+        reqwest::StatusCode::NOT_FOUND => {
+        return Err(ProviderError::NotFound(format!("pass {_pass_id} not found")));
+        }
+        reqwest::StatusCode::SERVICE_UNAVAILABLE => {
+        return Err(ProviderError::Unavailable("helios unavailable".to_string()));
+        }
+        other => {
+        return Err(ProviderError::Unavailable(format!("unexpected status {other}")));
+        }
+
+        } 
+}
     async fn fetch_payload(&self, _contact_id: &str) -> Result<Payload, ProviderError> {
         todo!("GET /v1/bookings/{{id}}/download and base64-decode into a Payload")
     }
