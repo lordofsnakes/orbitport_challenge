@@ -30,6 +30,21 @@ pub struct HeliosPlugin {
     http: reqwest::Client,
 }
 
+#[derive(serde::Deserialize)]
+struct WindowsResponse{
+     windows: Vec<HeliosWindow>
+}
+#[derive(serde::Deserialize)]
+struct HeliosWindow {
+    #[serde(rename = "ref")]
+    reference: String,
+    spacecraft: String,
+    site: String,
+    window_start: chrono::DateTime<chrono::Utc>,
+    window_end: chrono::DateTime<chrono::Utc>,
+    peak_elevation_deg: f64,
+}
+
 impl HeliosPlugin {
     pub fn new(base_url: impl Into<String>, token: impl Into<String>) -> Self {
         Self {
@@ -57,10 +72,64 @@ impl GroundStationProvider for HeliosPlugin {
     }
 
     async fn list_passes(&self, _query: PassQuery) -> Result<Vec<Pass>, ProviderError> {
-        todo!("call GET /v1/windows and map each Helios window onto a canonical Pass")
+        
+        
+        
+        let response = self.http
+        .get(format!("{}/v1/windows", self.base_url))
+        .bearer_auth(&self.token)
+        .query(&[
+            ("sat", _query.satellite_id.as_str()),
+            ("start", _query.from.to_rfc3339().as_str()),
+            ("end", _query.to.to_rfc3339().as_str()),
+        ]).send().await?;
+        
+        let status = response.status();
+        match status{
+           reqwest::StatusCode::OK =>{
+            
+            let body: WindowsResponse = response
+            .json()
+            .await
+            .map_err(|e| ProviderError::Decode(e.to_string()))?;
+            
+            
+            let mut passes = Vec::new();
+            for window in body.windows{
+                passes.push(Pass{
+                    id: window.reference,
+                    satellite_id: window.spacecraft,
+                    ground_station: window.site,
+                    aos: window.window_start,
+                    los: window.window_end,
+                    max_elevation_deg: window.peak_elevation_deg
+                });
+
+            }
+            return Ok(passes)
+           }
+           reqwest::StatusCode::UNAUTHORIZED =>{
+            return Err(ProviderError::Auth);
+           }
+           reqwest::StatusCode::NOT_FOUND =>{
+            return Err(ProviderError::NotFound("windows not found".to_string()));
+           }
+           reqwest::StatusCode::SERVICE_UNAVAILABLE =>{
+            return Err(ProviderError::Unavailable("helios unavailable".to_string()));
+           }
+           other => {
+           return Err(ProviderError::Unavailable(format!("unexpected status {other}")));
+           }
+  
+        }
+  
+        //todo!("call GET /v1/windows and map each Helios window onto a canonical Pass")
     }
 
     async fn schedule_contact(&self, _pass_id: &str) -> Result<Contact, ProviderError> {
+        
+
+
         todo!("POST /v1/bookings and return a Contact, mapping the Helios `state`")
     }
 
