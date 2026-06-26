@@ -20,7 +20,7 @@ use async_trait::async_trait;
 
 use crate::provider::{GroundStationProvider, ProviderError};
 use crate::types::*;
-
+use base64::Engine;
 pub struct HeliosPlugin {
     #[allow(dead_code)]
     base_url: String,
@@ -50,6 +50,12 @@ struct BookingResponse {
      window_ref: String,
      state: String 
     }
+
+#[derive(serde::Deserialize)]
+struct DownloadResponse {
+    mime: String,
+    b64: String
+}
 
 impl HeliosPlugin {
     pub fn new(base_url: impl Into<String>, token: impl Into<String>) -> Self {
@@ -181,9 +187,54 @@ impl GroundStationProvider for HeliosPlugin {
         return Err(ProviderError::Unavailable(format!("unexpected status {other}")));
         }
 
-        } 
+            } 
 }
     async fn fetch_payload(&self, _contact_id: &str) -> Result<Payload, ProviderError> {
-        todo!("GET /v1/bookings/{{id}}/download and base64-decode into a Payload")
+        let response = self.http
+        .get(format!("{}/v1/bookings/{}/download", self.base_url, _contact_id))
+        .bearer_auth(&self.token)
+        .send()
+        .await?;
+        
+       
+        let status = response.status();
+        
+        match status{
+            reqwest::StatusCode::OK => {
+                let body: DownloadResponse = response
+                .json()
+                .await
+                .map_err(|e| ProviderError::Decode(e.to_string()))?;
+
+                let data = base64::engine::general_purpose::STANDARD
+                .decode(body.b64)
+                .map_err(|e| ProviderError::Decode(e.to_string()))?;
+            
+                Ok(Payload{
+                    contact_id: _contact_id.to_string(),
+                    content_type: body.mime,
+                    data
+                })
+        }
+
+            reqwest::StatusCode::UNAUTHORIZED => {
+            return Err(ProviderError::Auth);
+        }
+            reqwest::StatusCode::NOT_FOUND => {
+            return Err(ProviderError::NotFound(format!("_contact_id {_contact_id} not found")));
+        }
+            reqwest::StatusCode::SERVICE_UNAVAILABLE => {
+            return Err(ProviderError::Unavailable("payload not ready".to_string()));
+        }
+            other => {
+            return Err(ProviderError::Unavailable(format!("unexpected status {other}")));
+        }
+
+
+        }
+        
     }
+
+   
+    
 }
