@@ -33,7 +33,6 @@ fn query() -> PassQuery {
 }
 
 #[tokio::test]
-#[ignore = "requires the mock (cargo run --bin mock); remove once your plugin is wired up"]
 async fn list_passes_maps_the_window() {
     let passes = plugin().list_passes(query()).await.unwrap_or_else(|e| {
         panic!(
@@ -47,4 +46,16 @@ async fn list_passes_maps_the_window() {
         passes.iter().any(|p| p.id == "w_1a2b"),
         "the known window w_1a2b should be present"
     );
+}
+
+#[tokio::test]
+async fn fetch_payload_downloads_completed_booking() {
+    let payload = plugin()
+        .fetch_payload("bk_done")
+        .await
+        .expect("bk_done should have a completed payload");
+
+    assert_eq!(payload.contact_id, "bk_done");
+    assert_eq!(payload.content_type, "application/octet-stream");
+    assert!(!payload.data.is_empty(), "payload bytes should not be empty");
 }
